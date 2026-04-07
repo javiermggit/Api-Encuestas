@@ -38,8 +38,7 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(
                 "http://localhost:4200",
-                "https://dynamic-survey-web.vercel.app",
-                "https://dynamic-survey-web.netlify.app"
+                "https://dynamic-survey-rtnc.vercel.app"
             )
             .AllowAnyHeader()
             .AllowAnyMethod();
