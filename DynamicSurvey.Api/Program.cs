@@ -17,7 +17,9 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
             .Where(x => x.Value?.Errors.Count > 0)
             .ToDictionary(
                 x => x.Key,
-                x => x.Value!.Errors.Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage) ? "Valor inválido." : e.ErrorMessage).ToArray());
+                x => x.Value!.Errors
+                    .Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage) ? "Valor inválido." : e.ErrorMessage)
+                    .ToArray());
 
         return new BadRequestObjectResult(new
         {
@@ -32,10 +34,13 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AngularDev", policy =>
+    options.AddPolicy("AngularClients", policy =>
     {
-        policy
-            .WithOrigins("http://localhost:4200")
+        policy.WithOrigins(
+                "http://localhost:4200",
+                "https://dynamic-survey-web.vercel.app",
+                "https://dynamic-survey-web.netlify.app"
+            )
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
@@ -54,14 +59,11 @@ var app = builder.Build();
 
 app.UseGlobalExceptionHandling();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
-app.UseCors("AngularDev");
+app.UseCors("AngularClients");
 app.UseAuthorization();
 app.MapControllers();
 
