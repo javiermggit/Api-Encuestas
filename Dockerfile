@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet restore DynamicSurvey.sln
+RUN dotnet restore DynamicSurvey.slnx
 RUN dotnet publish DynamicSurvey.Api/DynamicSurvey.Api.csproj -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
