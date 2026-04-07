@@ -14,6 +14,13 @@ public class SurveysController : ControllerBase
         _service = service;
     }
 
+    [HttpGet]
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
+    {
+        var surveys = await _service.GetAllActiveAsync(cancellationToken);
+        return Ok(surveys);
+    }
+
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id, CancellationToken cancellationToken)
     {

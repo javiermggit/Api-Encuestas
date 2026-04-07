@@ -1,4 +1,5 @@
-﻿using DynamicSurvey.Application.DTOs;
+using DynamicSurvey.Application.Common.Exceptions;
+using DynamicSurvey.Application.DTOs;
 using DynamicSurvey.Application.Interfaces;
 using DynamicSurvey.Domain.Entities;
 using DynamicSurvey.Infrastructure.Persistence;
@@ -19,27 +20,40 @@ public class SurveySessionService : ISurveySessionService
 
     public async Task<long> CreateSessionAsync(CreateSessionDto dto, CancellationToken cancellationToken)
     {
+        var surveyExists = await _context.Surveys
+            .AsNoTracking()
+            .AnyAsync(x => x.Id == dto.SurveyId && x.IsActive, cancellationToken);
+
+        if (!surveyExists)
+            throw new NotFoundException("La encuesta no existe o está inactiva.");
+
         var firstSection = await _context.SurveySections
+            .AsNoTracking()
             .Where(x => x.SurveyId == dto.SurveyId && x.IsActive)
             .OrderBy(x => x.DisplayOrder)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (firstSection is null)
-            throw new Exception("La encuesta no tiene secciones activas.");
+            throw new BusinessException("La encuesta no tiene secciones activas.");
 
         var firstQuestion = await _context.SurveyQuestions
+            .AsNoTracking()
             .Where(x => x.SectionId == firstSection.Id && x.IsActive)
             .OrderBy(x => x.DisplayOrder)
             .FirstOrDefaultAsync(cancellationToken);
 
+        if (firstQuestion is null)
+            throw new BusinessException("La primera sección no tiene preguntas activas.");
+
         var session = new SurveySession
         {
             SurveyId = dto.SurveyId,
-            UserId = dto.UserId,
+            UserId = dto.UserId?.Trim(),
             Status = "InProgress",
             CurrentSectionId = firstSection.Id,
-            CurrentQuestionId = firstQuestion?.Id,
-            StartedAt = DateTime.UtcNow
+            CurrentQuestionId = firstQuestion.Id,
+            StartedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
         };
 
         _context.SurveySessions.Add(session);
@@ -67,20 +81,20 @@ public class SurveySessionService : ISurveySessionService
 
         if (session.CurrentSectionId.HasValue)
         {
-            var currentSection = await _context.SurveySections
+            currentSectionTitle = await _context.SurveySections
                 .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.Id == session.CurrentSectionId.Value, cancellationToken);
-
-            currentSectionTitle = currentSection?.Title;
+                .Where(x => x.Id == session.CurrentSectionId.Value)
+                .Select(x => x.Title)
+                .FirstOrDefaultAsync(cancellationToken);
         }
 
         if (session.CurrentQuestionId.HasValue)
         {
-            var currentQuestion = await _context.SurveyQuestions
+            currentQuestionText = await _context.SurveyQuestions
                 .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.Id == session.CurrentQuestionId.Value, cancellationToken);
-
-            currentQuestionText = currentQuestion?.Text;
+                .Where(x => x.Id == session.CurrentQuestionId.Value)
+                .Select(x => x.Text)
+                .FirstOrDefaultAsync(cancellationToken);
         }
 
         return new SurveySessionDetailDto
@@ -111,13 +125,122 @@ public class SurveySessionService : ISurveySessionService
         };
     }
 
+    public async Task<SessionProgressDto?> GetProgressAsync(long sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _context.SurveySessions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
+
+        if (session is null)
+            return null;
+
+        var totalQuestions = await _context.SurveyQuestions
+            .AsNoTracking()
+            .CountAsync(x => x.IsActive && x.Section.SurveyId == session.SurveyId, cancellationToken);
+
+        var answeredQuestions = await _context.SurveyAnswers
+            .AsNoTracking()
+            .CountAsync(x => x.SessionId == sessionId, cancellationToken);
+
+        string? currentSectionTitle = null;
+        string? currentQuestionText = null;
+
+        if (session.CurrentSectionId.HasValue)
+        {
+            currentSectionTitle = await _context.SurveySections
+                .AsNoTracking()
+                .Where(x => x.Id == session.CurrentSectionId.Value)
+                .Select(x => x.Title)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (session.CurrentQuestionId.HasValue)
+        {
+            currentQuestionText = await _context.SurveyQuestions
+                .AsNoTracking()
+                .Where(x => x.Id == session.CurrentQuestionId.Value)
+                .Select(x => x.Text)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        var completionPercentage = totalQuestions == 0
+            ? 0
+            : Math.Round((decimal)answeredQuestions * 100 / totalQuestions, 2);
+
+        return new SessionProgressDto
+        {
+            SessionId = session.Id,
+            SurveyId = session.SurveyId,
+            Status = session.Status,
+            TotalQuestions = totalQuestions,
+            AnsweredQuestions = answeredQuestions,
+            CompletionPercentage = completionPercentage,
+            CurrentSectionId = session.CurrentSectionId,
+            CurrentSectionTitle = currentSectionTitle,
+            CurrentQuestionId = session.CurrentQuestionId,
+            CurrentQuestionText = currentQuestionText
+        };
+    }
+
+    public async Task<bool> CompleteSessionAsync(long sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _context.SurveySessions
+            .FirstOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
+
+        if (session is null)
+            return false;
+
+        if (session.Status == "Completed")
+            return true;
+
+        session.Status = "Completed";
+        session.CompletedAt = DateTime.UtcNow;
+        session.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<NavigationResultDto> SaveAnswerAndNavigateAsync(long sessionId, SaveAnswerDto dto, CancellationToken cancellationToken)
     {
         var session = await _context.SurveySessions
             .FirstOrDefaultAsync(x => x.Id == sessionId, cancellationToken);
 
         if (session is null)
-            throw new Exception("La sesión no existe.");
+            throw new NotFoundException("La sesión no existe.");
+
+        if (session.Status == "Completed")
+            throw new BusinessException("La sesión ya está finalizada.");
+
+        var question = await _context.SurveyQuestions
+            .AsNoTracking()
+            .Include(x => x.Section)
+            .FirstOrDefaultAsync(x => x.Id == dto.QuestionId && x.Section.SurveyId == session.SurveyId, cancellationToken);
+
+        if (question is null)
+            throw new NotFoundException("La pregunta no existe en la encuesta de la sesión.");
+
+        var optionIds = dto.OptionIds?
+            .Where(x => x > 0)
+            .Distinct()
+            .ToList() ?? new List<int>();
+
+        if (question.IsRequired && string.IsNullOrWhiteSpace(dto.AnswerValue) && optionIds.Count == 0)
+            throw new BusinessException("La pregunta es obligatoria.");
+
+        if (optionIds.Count > 0)
+        {
+            var validOptionIds = await _context.SurveyQuestionOptions
+                .AsNoTracking()
+                .Where(x => x.QuestionId == dto.QuestionId && optionIds.Contains(x.Id) && x.IsActive)
+                .Select(x => x.Id)
+                .ToListAsync(cancellationToken);
+
+            if (validOptionIds.Count != optionIds.Count)
+                throw new BusinessException("Una o más opciones no pertenecen a la pregunta.");
+        }
+
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
         var existingAnswer = await _context.SurveyAnswers
             .Include(x => x.AnswerOptions)
@@ -129,8 +252,9 @@ public class SurveySessionService : ISurveySessionService
             {
                 SessionId = sessionId,
                 QuestionId = dto.QuestionId,
-                AnswerValue = dto.AnswerValue,
-                CreatedAt = DateTime.UtcNow
+                AnswerValue = dto.AnswerValue?.Trim(),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
             };
 
             _context.SurveyAnswers.Add(existingAnswer);
@@ -138,16 +262,18 @@ public class SurveySessionService : ISurveySessionService
         }
         else
         {
-            existingAnswer.AnswerValue = dto.AnswerValue;
+            existingAnswer.AnswerValue = dto.AnswerValue?.Trim();
             existingAnswer.UpdatedAt = DateTime.UtcNow;
 
-            _context.SurveyAnswerOptions.RemoveRange(existingAnswer.AnswerOptions);
+            if (existingAnswer.AnswerOptions.Count > 0)
+                _context.SurveyAnswerOptions.RemoveRange(existingAnswer.AnswerOptions);
+
             await _context.SaveChangesAsync(cancellationToken);
         }
 
-        if (dto.OptionIds is not null && dto.OptionIds.Count > 0)
+        if (optionIds.Count > 0)
         {
-            foreach (var optionId in dto.OptionIds)
+            foreach (var optionId in optionIds)
             {
                 _context.SurveyAnswerOptions.Add(new SurveyAnswerOption
                 {
@@ -160,6 +286,7 @@ public class SurveySessionService : ISurveySessionService
         }
 
         var navigation = await _ruleEngine.EvaluateAsync(
+            sessionId,
             session.SurveyId,
             dto.QuestionId,
             dto.AnswerValue,
@@ -171,52 +298,52 @@ public class SurveySessionService : ISurveySessionService
             session.CompletedAt = DateTime.UtcNow;
             session.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return navigation;
         }
 
         if (navigation.NextQuestionId.HasValue)
         {
             var nextQuestion = await _context.SurveyQuestions
-                .Include(q => q.Section)
-                .FirstOrDefaultAsync(q => q.Id == navigation.NextQuestionId.Value, cancellationToken);
+                .AsNoTracking()
+                .FirstOrDefaultAsync(q => q.Id == navigation.NextQuestionId.Value && q.IsActive, cancellationToken);
 
-            session.CurrentQuestionId = nextQuestion?.Id;
-            session.CurrentSectionId = nextQuestion?.SectionId;
+            if (nextQuestion is null)
+                throw new BusinessException("La navegación apunta a una pregunta inexistente o inactiva.");
+
+            session.CurrentQuestionId = nextQuestion.Id;
+            session.CurrentSectionId = nextQuestion.SectionId;
             session.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync(cancellationToken);
-
+            await transaction.CommitAsync(cancellationToken);
             return navigation;
         }
 
         if (navigation.NextSectionId.HasValue)
         {
-            session.CurrentSectionId = navigation.NextSectionId.Value;
-
             var nextQuestion = await _context.SurveyQuestions
+                .AsNoTracking()
                 .Where(x => x.SectionId == navigation.NextSectionId.Value && x.IsActive)
                 .OrderBy(x => x.DisplayOrder)
                 .FirstOrDefaultAsync(cancellationToken);
 
-            session.CurrentQuestionId = nextQuestion?.Id;
+            if (nextQuestion is null)
+                throw new BusinessException("La sección destino no tiene preguntas activas.");
+
+            session.CurrentSectionId = navigation.NextSectionId.Value;
+            session.CurrentQuestionId = nextQuestion.Id;
             session.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            navigation.NextQuestionId = nextQuestion?.Id;
+            navigation.NextQuestionId = nextQuestion.Id;
+            await transaction.CommitAsync(cancellationToken);
             return navigation;
         }
 
-        var currentQuestion = await _context.SurveyQuestions
-            .Include(x => x.Section)
-            .FirstOrDefaultAsync(x => x.Id == dto.QuestionId, cancellationToken);
-
-        if (currentQuestion is null)
-            throw new Exception("La pregunta actual no existe.");
-
         var nextNormalQuestion = await _context.SurveyQuestions
-            .Where(x => x.SectionId == currentQuestion.SectionId &&
-                        x.DisplayOrder > currentQuestion.DisplayOrder &&
-                        x.IsActive)
+            .AsNoTracking()
+            .Where(x => x.SectionId == question.SectionId && x.DisplayOrder > question.DisplayOrder && x.IsActive)
             .OrderBy(x => x.DisplayOrder)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -225,6 +352,7 @@ public class SurveySessionService : ISurveySessionService
             session.CurrentQuestionId = nextNormalQuestion.Id;
             session.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
             return new NavigationResultDto
             {
@@ -233,28 +361,32 @@ public class SurveySessionService : ISurveySessionService
         }
 
         var nextSection = await _context.SurveySections
-            .Where(x => x.SurveyId == session.SurveyId &&
-                        x.DisplayOrder > currentQuestion.Section.DisplayOrder &&
-                        x.IsActive)
+            .AsNoTracking()
+            .Where(x => x.SurveyId == session.SurveyId && x.DisplayOrder > question.Section.DisplayOrder && x.IsActive)
             .OrderBy(x => x.DisplayOrder)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (nextSection is not null)
         {
             var firstQuestionOfNextSection = await _context.SurveyQuestions
+                .AsNoTracking()
                 .Where(x => x.SectionId == nextSection.Id && x.IsActive)
                 .OrderBy(x => x.DisplayOrder)
                 .FirstOrDefaultAsync(cancellationToken);
 
+            if (firstQuestionOfNextSection is null)
+                throw new BusinessException("La siguiente sección no tiene preguntas activas.");
+
             session.CurrentSectionId = nextSection.Id;
-            session.CurrentQuestionId = firstQuestionOfNextSection?.Id;
+            session.CurrentQuestionId = firstQuestionOfNextSection.Id;
             session.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
             return new NavigationResultDto
             {
                 NextSectionId = nextSection.Id,
-                NextQuestionId = firstQuestionOfNextSection?.Id
+                NextQuestionId = firstQuestionOfNextSection.Id
             };
         }
 
@@ -262,6 +394,7 @@ public class SurveySessionService : ISurveySessionService
         session.CompletedAt = DateTime.UtcNow;
         session.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return new NavigationResultDto
         {

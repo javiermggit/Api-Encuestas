@@ -14,10 +14,30 @@ public class SurveyDefinitionService : ISurveyDefinitionService
         _context = context;
     }
 
+    public async Task<List<SurveyListItemDto>> GetAllActiveAsync(CancellationToken cancellationToken)
+    {
+        return await _context.Surveys
+            .AsNoTracking()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.Name)
+            .ThenByDescending(x => x.Version)
+            .Select(x => new SurveyListItemDto
+            {
+                Id = x.Id,
+                Name = x.Name,
+                Description = x.Description,
+                IsActive = x.IsActive,
+                Version = x.Version,
+                CreatedAt = x.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<SurveyDefinitionDto?> GetByIdAsync(int surveyId, CancellationToken cancellationToken)
     {
         var survey = await _context.Surveys
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(x => x.Sections.Where(s => s.IsActive).OrderBy(s => s.DisplayOrder))
                 .ThenInclude(s => s.Questions.Where(q => q.IsActive).OrderBy(q => q.DisplayOrder))
                     .ThenInclude(q => q.Options.Where(o => o.IsActive).OrderBy(o => o.DisplayOrder))

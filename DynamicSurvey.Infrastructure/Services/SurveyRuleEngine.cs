@@ -1,4 +1,4 @@
-﻿using DynamicSurvey.Application.DTOs;
+using DynamicSurvey.Application.DTOs;
 using DynamicSurvey.Application.Interfaces;
 using DynamicSurvey.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -15,12 +15,20 @@ public class SurveyRuleEngine : ISurveyRuleEngine
     }
 
     public async Task<NavigationResultDto> EvaluateAsync(
+        long sessionId,
         int surveyId,
         int currentQuestionId,
         string? answerValue,
         CancellationToken cancellationToken)
     {
-        var normalizedAnswer = answerValue?.Trim().ToUpper();
+        var normalizedAnswer = Normalize(answerValue);
+
+        var answers = await _context.SurveyAnswers
+            .AsNoTracking()
+            .Where(a => a.SessionId == sessionId)
+            .ToDictionaryAsync(a => a.QuestionId, a => Normalize(a.AnswerValue), cancellationToken);
+
+        answers[currentQuestionId] = normalizedAnswer;
 
         var rules = await _context.SurveyRules
             .AsNoTracking()
@@ -36,18 +44,15 @@ public class SurveyRuleEngine : ISurveyRuleEngine
                 .Where(c => c.IsActive)
                 .ToList();
 
-            if (!conditions.Any())
+            if (conditions.Count == 0)
                 continue;
 
-            var allConditionsMatch = conditions.All(c =>
-                EvaluateCondition(
-                    c.QuestionId,
-                    currentQuestionId,
-                    c.Operator,
-                    c.ExpectedValue,
-                    normalizedAnswer));
+            var ruleMatched = conditions
+                .GroupBy(c => c.LogicalGroup)
+                .Any(group => group.All(condition =>
+                    EvaluateCondition(condition.Operator, condition.ExpectedValue, answers.GetValueOrDefault(condition.QuestionId))));
 
-            if (!allConditionsMatch)
+            if (!ruleMatched)
                 continue;
 
             var result = new NavigationResultDto
@@ -99,32 +104,23 @@ public class SurveyRuleEngine : ISurveyRuleEngine
                 return result;
         }
 
-        return new NavigationResultDto
-        {
-            Matched = false
-        };
+        return new NavigationResultDto { Matched = false };
     }
 
-    private static bool EvaluateCondition(
-        int conditionQuestionId,
-        int currentQuestionId,
-        string op,
-        string? expectedValue,
-        string? currentAnswerValue)
-    {
-        if (conditionQuestionId != currentQuestionId)
-            return false;
+    private static string? Normalize(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 
-        var normalizedExpected = expectedValue?.Trim().ToUpper();
-        var normalizedCurrent = currentAnswerValue?.Trim().ToUpper();
+    private static bool EvaluateCondition(string op, string? expectedValue, string? currentAnswerValue)
+    {
+        var normalizedExpected = Normalize(expectedValue);
 
         return op switch
         {
-            "Equals" => normalizedCurrent == normalizedExpected,
-            "NotEquals" => normalizedCurrent != normalizedExpected,
-            "Contains" => normalizedCurrent != null && normalizedExpected != null && normalizedCurrent.Contains(normalizedExpected),
-            "IsEmpty" => string.IsNullOrWhiteSpace(normalizedCurrent),
-            "IsNotEmpty" => !string.IsNullOrWhiteSpace(normalizedCurrent),
+            "Equals" => currentAnswerValue == normalizedExpected,
+            "NotEquals" => currentAnswerValue != normalizedExpected,
+            "Contains" => currentAnswerValue != null && normalizedExpected != null && currentAnswerValue.Contains(normalizedExpected),
+            "IsEmpty" => string.IsNullOrWhiteSpace(currentAnswerValue),
+            "IsNotEmpty" => !string.IsNullOrWhiteSpace(currentAnswerValue),
             _ => false
         };
     }

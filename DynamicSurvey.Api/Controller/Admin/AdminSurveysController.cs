@@ -30,6 +30,17 @@ public class AdminSurveysController : ControllerBase
         return Ok(surveys);
     }
 
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetById(int id, CancellationToken cancellationToken)
+    {
+        var survey = await _adminService.GetSurveyByIdAsync(id, cancellationToken);
+
+        if (survey is null)
+            return NotFound(new { message = "Encuesta no encontrada." });
+
+        return Ok(survey);
+    }
+
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateSurveyDto dto, CancellationToken cancellationToken)
     {

@@ -1,11 +1,31 @@
-using DynamicSurvey.Application.Interfaces;
+using DynamicSurvey.Api.Middleware;
 using DynamicSurvey.Infrastructure.Persistence;
 using DynamicSurvey.Infrastructure.Services;
+using DynamicSurvey.Application.Interfaces;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var errors = context.ModelState
+            .Where(x => x.Value?.Errors.Count > 0)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Value!.Errors.Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage) ? "Valor inválido." : e.ErrorMessage).ToArray());
+
+        return new BadRequestObjectResult(new
+        {
+            message = "La solicitud contiene errores de validación.",
+            errors
+        });
+    };
+});
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -32,6 +52,8 @@ builder.Services.AddScoped<ISurveyAdminService, SurveyAdminService>();
 
 var app = builder.Build();
 
+app.UseGlobalExceptionHandling();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -39,9 +61,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseCors("AngularDev");
-
 app.UseAuthorization();
 app.MapControllers();
 

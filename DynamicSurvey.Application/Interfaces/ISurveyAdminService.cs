@@ -12,6 +12,9 @@ public interface ISurveyAdminService
     Task<List<SurveyRuleListItemDto>> GetRulesBySurveyAsync(int surveyId, CancellationToken cancellationToken);
 
     Task<List<SurveyListItemDto>> GetSurveysAsync(CancellationToken cancellationToken);
+    Task<SurveyAdminDetailDto?> GetSurveyByIdAsync(int surveyId, CancellationToken cancellationToken);
+    Task<List<SurveyQuestionDto>> GetQuestionsBySectionAsync(int sectionId, CancellationToken cancellationToken);
+    Task<List<SurveyQuestionOptionDto>> GetOptionsByQuestionAsync(int questionId, CancellationToken cancellationToken);
 
     Task<bool> UpdateSurveyAsync(int surveyId, UpdateSurveyDto dto, CancellationToken cancellationToken);
 }

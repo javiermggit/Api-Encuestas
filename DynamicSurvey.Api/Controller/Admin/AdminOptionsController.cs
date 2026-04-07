@@ -15,6 +15,13 @@ public class AdminOptionsController : ControllerBase
         _adminService = adminService;
     }
 
+    [HttpGet]
+    public async Task<IActionResult> GetByQuestion(int questionId, CancellationToken cancellationToken)
+    {
+        var options = await _adminService.GetOptionsByQuestionAsync(questionId, cancellationToken);
+        return Ok(options);
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create(int questionId, [FromBody] CreateSurveyQuestionOptionDto dto, CancellationToken cancellationToken)
     {

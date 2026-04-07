@@ -33,6 +33,28 @@ public class SessionsController : ControllerBase
         return Ok(session);
     }
 
+    [HttpGet("{sessionId:long}/progress")]
+    public async Task<IActionResult> GetProgress(long sessionId, CancellationToken cancellationToken)
+    {
+        var progress = await _sessionService.GetProgressAsync(sessionId, cancellationToken);
+
+        if (progress is null)
+            return NotFound(new { message = "La sesión no existe." });
+
+        return Ok(progress);
+    }
+
+    [HttpPost("{sessionId:long}/complete")]
+    public async Task<IActionResult> Complete(long sessionId, CancellationToken cancellationToken)
+    {
+        var completed = await _sessionService.CompleteSessionAsync(sessionId, cancellationToken);
+
+        if (!completed)
+            return NotFound(new { message = "La sesión no existe." });
+
+        return Ok(new { message = "La sesión fue finalizada correctamente." });
+    }
+
     [HttpPost("{sessionId:long}/answers")]
     public async Task<IActionResult> SaveAnswer(long sessionId, [FromBody] SaveAnswerDto dto, CancellationToken cancellationToken)
     {
