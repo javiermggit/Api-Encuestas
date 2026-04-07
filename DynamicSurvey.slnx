@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="DynamicSurvey.Api/DynamicSurvey.Api.csproj" />
+  <Project Path="DynamicSurvey.Application/DynamicSurvey.Application.csproj" />
+  <Project Path="DynamicSurvey.Domain/DynamicSurvey.Domain.csproj" />
+  <Project Path="DynamicSurvey.Infrastructure/DynamicSurvey.Infrastructure.csproj" />
+</Solution>
